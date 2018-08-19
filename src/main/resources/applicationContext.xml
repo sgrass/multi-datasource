@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:p="http://www.springframework.org/schema/p"
+       xmlns:aop="http://www.springframework.org/schema/aop"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:mvc="http://www.springframework.org/schema/mvc" xmlns:cache="http://www.springframework.org/schema/cache"
+       xmlns:tx="http://www.springframework.org/schema/tx"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-4.0.xsd
+    http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop-4.0.xsd
+    http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
+    http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc.xsd
+    http://www.springframework.org/schema/tx
+	http://www.springframework.org/schema/tx/spring-tx-4.0.xsd
+    http://www.springframework.org/schema/cache http://www.springframework.org/schema/cache/spring-cache.xsd">
+
+
+    <bean id="writeDataSource" class="org.springframework.jdbc.datasource.DriverManagerDataSource">
+        <property name="driverClassName" value="com.mysql.jdbc.Driver"/>
+        <property name="url" value="jdbc:mysql://192.168.254.130:3306/test"/>
+        <property name="username" value="root"/>
+        <property name="password" value="123123"/>
+    </bean>
+    <bean id="readDataSource" class="org.springframework.jdbc.datasource.DriverManagerDataSource">
+        <property name="driverClassName" value="com.mysql.jdbc.Driver"/>
+        <property name="url" value="jdbc:mysql://192.168.254.130:3306/temp"/>
+        <property name="username" value="root"/>
+        <property name="password" value="123123"/>
+    </bean>
+
+    <bean id="dynamicDataSource" class="org.cx.ds.DynamicDataSource">
+        <!--<property name="targetDataSources">
+            <map>
+                <entry key="readDataSource" value-ref="readDataSource"/>
+            </map>
+        </property>-->
+        <property name="slavesDataSource">
+            <list>
+                <ref bean="readDataSource"/>
+            </list>
+        </property>
+        <property name="masterDataSource" ref="writeDataSource"/>
+    </bean>
+
+
+    <bean id="transactionManager" class="org.cx.ds.DynamicDataSourceTransactionManager">
+        <property name="dataSource" ref="dynamicDataSource" />
+    </bean>
+    <bean id="sqlSessionFactory" class="org.mybatis.spring.SqlSessionFactoryBean">
+        <property name="dataSource" ref="dynamicDataSource" />
+        <property name="mapperLocations" value="classpath*:mapper/*.xml" />
+        <property name="configLocation" value="classpath:mybatis-config.xml" />
+    </bean>
+    <bean id="sqlSessionTemplate" class="org.mybatis.spring.SqlSessionTemplate">
+        <constructor-arg index="0" ref="sqlSessionFactory" />
+    </bean>
+    <bean class="org.mybatis.spring.mapper.MapperScannerConfigurer">
+        <property name="basePackage" value="org.cx.dao" />
+    </bean>
+
+
+    <!--<bean id="transactionManager2" class="org.springframework.jdbc.datasource.DataSourceTransactionManager">-->
+        <!--<property name="dataSource" ref="writeDataSource" />-->
+    <!--</bean>-->
+    <tx:advice id="txAdvice" transaction-manager="transactionManager">
+        <tx:attributes>
+            <tx:method name="insert*" propagation="REQUIRED" read-only="false" rollback-for="Exception"/>
+            <tx:method name="update*" propagation="REQUIRED" read-only="false" rollback-for="Exception"/>
+            <tx:method name="del*" propagation="REQUIRED" read-only="false" rollback-for="Exception"/>
+            <tx:method name="select*" read-only="true"/>
+            <tx:method name="query*" read-only="true"/>
+            <tx:method name="*" propagation="REQUIRED" rollback-for="Exception"/>
+        </tx:attributes>
+    </tx:advice>
+    <aop:config>
+        <aop:pointcut id="allManagerMethod" expression="execution(* org.cx.service..*(..))" />
+        <aop:advisor pointcut-ref="allManagerMethod" advice-ref="txAdvice" />
+    </aop:config>
+
+
+    <context:component-scan base-package="org.cx"/>
+    <mvc:annotation-driven/>
+
+
+    <cache:annotation-driven cache-manager="cacheManager" />
+
+    <!-- redis 相关配置 -->
+    <bean id="poolConfig" class="redis.clients.jedis.JedisPoolConfig">
+        <property name="maxIdle" value="10" />
+        <property name="maxWaitMillis" value="100" />
+        <property name="testOnBorrow" value="true" />
+    </bean>
+
+    <bean id="JedisConnectionFactory" class="org.springframework.data.redis.connection.jedis.JedisConnectionFactory"
+          p:host-name="192.168.254.130" p:port="6379" p:password="" p:pool-config-ref="poolConfig"/>
+
+    <bean id="redisTemplate" class="org.springframework.data.redis.core.RedisTemplate">
+        <property name="connectionFactory" ref="JedisConnectionFactory" />
+    </bean>
+
+    <!-- spring自己的缓存管理器，这里定义了缓存位置名称 ，即注解中的value -->
+    <bean id="cacheManager" class="org.springframework.cache.support.SimpleCacheManager">
+        <property name="caches">
+            <set>
+                <bean class="org.cx.cache.RedisCache">
+                    <property name="redisTemplate" ref="redisTemplate" />
+                    <property name="name" value="common"/>
+                    <!-- common名称要在类或方法的注解中使用 -->
+                </bean>
+            </set>
+        </property>
+    </bean>
+</beans>
